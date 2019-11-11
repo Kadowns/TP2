@@ -1,0 +1,109 @@
+pragma solidity ^0.5.6;
+
+
+import "github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC721/ERC721Full.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/ownership/Ownable.sol";
+import "./RicardoToken.sol";
+
+
+contract WeaponToken is ERC721Full, Ownable {
+  event NewWeapon(uint weaponId, string name, uint dna);
+
+  uint dnaDigits = 16;
+  uint dnaModulus = 10 ** dnaDigits;
+  
+  uint createWeaponFee = 0.001 ether;
+  uint creationUpFee = 5;
+  uint createFeeCorrected = 1;
+  uint weaponPrice = 1;
+  
+  struct Weapon {
+    string name;
+    uint256 _weaponDna;
+    uint64 birthTime;
+  }
+  
+  struct Auction{
+      uint weaponId;
+      uint maxBids;
+      uint bestBid;
+      uint currentParticipants;
+      address currentWinner;
+  }
+  
+  constructor() public ERC721Full("WeaponToken","WEAPON"){
+      
+  }
+
+
+
+  Weapon[] public weapons;
+  mapping (uint => address) public weaponIndexToOwner;
+  mapping (address => uint) ownerWeaponCount;
+  RicardoToken tokenContract;
+  Auction currentAuction;
+  
+  function setRicardoToken(address payable novoRicardo) external onlyOwner  {
+      tokenContract = RicardoToken(novoRicardo);
+  }
+
+  function _createWeapon(string memory _name, uint _dna) internal {
+    uint id = weapons.push(Weapon(_name, _dna,uint64(now))) - 1;
+    weaponIndexToOwner[id] = msg.sender;
+    ownerWeaponCount[msg.sender]++;
+    emit NewWeapon(id, _name, _dna);
+  }
+  function _generateRandomDna(string memory _str) private view returns (uint) {
+    uint rand = uint(keccak256(abi.encodePacked(_str)));
+    return rand % dnaModulus;
+  }
+  function createRandomWeapon(string calldata _name) external payable {   
+    require(msg.value == createWeaponFee);
+    require(ownerWeaponCount[msg.sender] < 10);
+    _createWeapon(_name,_generateRandomDna(_name));
+  }
+  
+  modifier haveBalance{
+    require(tokenContract.balanceOf(msg.sender) >= creationUpFee);
+    _;
+  }
+  
+  function beginAuction(uint _weaponId, uint _maxParticipants) external {
+      require(msg.sender == weaponIndexToOwner[_weaponId]);
+      currentAuction = Auction(_weaponId, _maxParticipants, 0, 0, msg.sender);
+  }
+  
+  function bid(uint value) external returns(string memory message){
+      require(tokenContract.balanceOf(msg.sender) >= value);
+      if (value > currentAuction.bestBid){
+          currentAuction.bestBid = value;
+          currentAuction.currentWinner = msg.sender;
+      }
+      currentAuction.currentParticipants++;
+      if (currentAuction.currentParticipants >= currentAuction.maxBids){
+          tokenContract.pay(currentAuction.currentWinner, weaponIndexToOwner[currentAuction.weaponId], currentAuction.bestBid);
+          weaponIndexToOwner[currentAuction.weaponId] = currentAuction.currentWinner;
+          return "Auction finished!";
+      }
+      return "Auction still running!";
+  }
+
+  function buyWeaponFrom(address buyer, address seller, uint weaponId) external payable {
+     require(seller == weaponIndexToOwner[weaponId]);
+     require(tokenContract.balanceOf(buyer) > weaponPrice);
+     tokenContract.pay(buyer, seller, weaponPrice);
+     weaponPrice += 1;
+     weaponIndexToOwner[weaponId] = buyer;
+  }
+  
+  function mixWeaponDna(string calldata _name,uint weaponId, uint weaponId2)external payable{
+    require(msg.sender == weaponIndexToOwner[weaponId]);
+    require(msg.sender == weaponIndexToOwner[weaponId2]);
+    Weapon storage myWeapon = weapons[weaponId];
+    Weapon storage myWeapon2 = weapons[weaponId2];
+    myWeapon._weaponDna += myWeapon2._weaponDna % dnaModulus;
+    uint newWeaponDna = (myWeapon._weaponDna) / 2;
+    _createWeapon(_name, newWeaponDna);
+  }
+
+}
